@@ -1,0 +1,100 @@
+# Default configuration yaml file
+# NOTE: See config/config_validation_template.py for the 
+# parameter restrictions.
+
+general:
+    device: cpu
+    output_folder: output/{datetime}/
+    seed: 42
+jobs:
+    - job:
+        name: test_run
+        modules:
+            - MNISTData:
+                label: train_data
+                root: data/
+                train: True
+                normalise: True
+            - MNISTData:
+                label: test_data
+                root: data/
+                train: False
+                normalise: True
+            - NeuralNetwork:
+                label: model
+                network_shape:
+                    - Linear:
+                        in_features: 784
+                        out_features: 512
+                    - ReLU:
+                    - Linear:
+                        in_features: 512
+                        out_features: 128
+                    - ReLU:
+                    - Linear:
+                        in_features: 128
+                        out_features: 32
+                    - ReLU:
+                    - Linear:
+                        in_features: 32
+                        out_features: 10
+                    - Softmax:
+
+            - Base:
+                label: model
+        trainer:
+            loader_defaults:
+                batch_size: 256
+                num_workers: 4
+                pin_memory: true
+            train:
+                data: train_data
+                loader: 
+                    shuffle: True
+            val:
+                data: test_data
+            test:
+                data: test_data
+            mode: holdout
+            model: model
+            epochs: 10
+            loss: 
+                name: CrossEntropyLoss
+            optimiser:
+                name: Adam
+                params:
+                    lr: 0.001
+            scheduler:
+                name: StepLR
+                params: 
+                    step_size: 5
+            metrics: [accuracy]
+            checkpoint:
+                resume: False
+                every: 2
+            export:
+                predictions: False
+            # kfold:
+            #     k: 5
+            #     stratisfied: True
+            
+                
+    # - job:
+    #     name: test_run
+    #     modules:
+    #         - Base:
+    #             label: input
+    #         - Base:
+    #             label: input
+    #         - Base:
+    #             label: model
+
+    # - job:
+    #     name: test_run
+    #     modules:
+    #         - Base:
+    #             label: input
+    #         - Base:
+    #             label: input
+    #         - Base:
+    #             label: model

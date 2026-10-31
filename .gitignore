@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Custom
+data/*
+!data/.gitkeep
+output/*
+!output/.gitkeep
+
