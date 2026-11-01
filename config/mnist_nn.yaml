@@ -1,0 +1,104 @@
+# Trains a fully connected NeuralNetwork on MNIST.
+# Run with: python main.py -c config/mnist_nn.yaml
+#
+# Trainer keys, all names refer to labels of modules in this job:
+#   mode            holdout (train/val split) or kfold (cross validation)
+#   train/val/test  `data`: module to use, `loader`: DataLoader kwargs
+#                   that override `loader_defaults`.
+#                   `val` may point to the same data as `train`, then
+#                   `fraction` of it is held out for validation.
+#                   `test` may list `visualisers` (registered names, or
+#                   [name, {kwargs}]).
+#   loss/optimiser/scheduler
+#                   `name` + `params` of a class in torch.nn /
+#                   torch.optim / torch.optim.lr_scheduler. Use
+#                   `module: <label>` instead to use a custom module of
+#                   this job.
+#   metrics         Registered metric names, see training/metrics.py.
+#   monitor         `value` (loss, a metric or a loss component) and
+#                   `goal` (min or max) that decide the best epoch.
+#   early_stopping  Optional, `patience` and `min_delta` on `monitor`.
+#   checkpoint      Optional, save weights and curves every `every` epochs.
+
+general:
+    device: cpu
+    output_folder: output/{datetime}/
+    seed: 42
+jobs:
+    - job:
+        name: mnist_nn
+        modules:
+            - MNISTData:
+                label: train_data
+                root: data/
+                train: True
+                normalise: True
+            - MNISTData:
+                label: test_data
+                root: data/
+                train: False
+                normalise: True
+            - NeuralNetwork:
+                label: model
+                network_shape:
+                    - Flatten:
+                    - Linear:
+                        in_features: 784
+                        out_features: 512
+                    - ReLU:
+                    - Linear:
+                        in_features: 512
+                        out_features: 128
+                    - ReLU:
+                    - Linear:
+                        in_features: 128
+                        out_features: 32
+                    - ReLU:
+                    - Linear:
+                        in_features: 32
+                        out_features: 10
+        trainer:
+            mode: holdout
+            loader_defaults:
+                batch_size: 256
+                num_workers: 4
+                pin_memory: false
+            train:
+                data: train_data
+                loader:
+                    shuffle: True
+            val:
+                data: train_data
+                fraction: 0.1
+                seed: 42
+            test:
+                data: test_data
+                visualisers:
+                    - confusion_matrix
+            model: model
+            epochs: 10
+            loss:
+                name: CrossEntropyLoss
+            optimiser:
+                name: Adam
+                params:
+                    lr: 0.001
+            scheduler:
+                name: StepLR
+                params:
+                    step_size: 5
+            metrics: [accuracy]
+            monitor:
+                value: accuracy
+                goal: max
+            early_stopping:
+                patience: 3
+                min_delta: 0.0
+            checkpoint:
+                every: 2
+            export:
+                predictions: False
+            # For cross validation instead of holdout, set `mode: kfold`
+            # and add (`val` is then not needed):
+            # kfold:
+            #     k: 5

@@ -54,7 +54,7 @@ class Job:
 
     def run(self)-> None:
         self.logger.info(f"Running job {self.name}")
-        pass
+        self.trainer.run()
 
     def __str__(self)-> str:
         return str(self.CONFIG)
