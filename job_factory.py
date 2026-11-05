@@ -45,13 +45,14 @@ class JobFactory:
         # Validate the provided config file.
         with open(config_path, 'r') as stream:
             CONFIG = yaml.safe_load(stream)
-        # try:
-        #     validate(CONFIG, CONFIG_TEMPLATE)
-        # except ValidationError as e:
-        #     raise ValidationError(
-        #         "\x1b[31;1mA validation error occurred in the config file" \
-        #         f": {e.message}\x1b[0m"
-        #     ) from e
+        try:
+            validate(CONFIG, CONFIG_TEMPLATE)
+        except ValidationError as e:
+            location = " -> ".join(str(part) for part in e.absolute_path)
+            raise ValidationError(
+                "\x1b[31;1mA validation error occurred in the config file "
+                f"(at `{location}`): {e.message}\x1b[0m"
+            ) from e
 
         self.CONFIG = CONFIG
 
@@ -124,6 +125,7 @@ class JobFactory:
                 new_job.add_module(
                     self._init_module(module_config, new_job.logger), 
                 )
+            new_job.link_modules()
 
             new_job.set_trainer(job_config["job"]["trainer"])
             self.logger.debug(f"Validating job with trainer")

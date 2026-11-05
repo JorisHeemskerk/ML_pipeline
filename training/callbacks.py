@@ -4,6 +4,16 @@ Callbacks that hook into the `Trainer`.
 Everything that is not the core training loop (early stopping, pruning,
 checkpointing, ...) lives here, so the trainer itself stays small. To 
 add behaviour, subclass `Callback` and override the hooks you need.
+
+Callbacks that only need keyword arguments can also be selected by name
+from a config. To add one, register it:
+
+    @CALLBACKS.register("my_callback")
+    class MyCallback(Callback):
+        ...
+
+It can then be requested with "my_callback", or with 
+("my_callback", {"some_kwarg": 1}) to pass arguments.
 """
 
 from pathlib import Path
@@ -11,6 +21,7 @@ from typing import TYPE_CHECKING, Callable, Protocol
 
 import torch
 
+from training.registry import Registry
 from training.visualisation import (
     plot_cross_validation_curves, 
     plot_training_curves
@@ -19,13 +30,17 @@ from training.visualisation import (
 if TYPE_CHECKING:
     from training.trainer import Trainer
 
+CALLBACKS = Registry("callback")
+
 
 class Callback:
     """
     Base class for all callbacks, every hook does nothing by default.
     The trainer exposes what a callback needs: `trainer.model`,
-    `trainer.logger`, `trainer.result`, `trainer.current_fold`, 
-    `trainer.is_best_epoch` and `trainer.should_stop`.
+    `trainer.loss_fn`, `trainer.optimiser`, `trainer.logger`, 
+    `trainer.result`, `trainer.current_fold`, `trainer.is_best_epoch`, 
+    `trainer.should_stop` and the dataloaders of the current fold: 
+    `trainer.train_dataloader` and `trainer.val_dataloader`.
     """
 
     def on_fit_start(self, trainer: "Trainer") -> None:
@@ -213,3 +228,17 @@ class CheckpointCallback(Callback):
                 self.output_dir / "cross_validation_curves.png",
                 "Cross validation"
             )
+
+
+def build_callbacks(
+    specs: list[str | tuple[str, dict]]
+) -> list[Callback]:
+    """
+    Build callbacks from their registered names.
+
+    :param specs: Registered names, or (registered name, kwargs).
+    :type specs: list[str | tuple[str, dict]]
+    :return: The callbacks, in the order of `specs`.
+    :rtype: list[Callback]
+    """
+    return list(CALLBACKS.build_all(specs).values())

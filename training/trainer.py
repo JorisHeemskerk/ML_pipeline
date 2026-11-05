@@ -6,7 +6,9 @@ The training loop is split into small methods. To change one aspect of
 the training, subclass `Trainer` and override only that method:
 
 - `forward`: how a batch goes through the model (e.g. reshaping the
-  output of a detection model).
+  output of a detection model). The output may be a tensor, or a tuple 
+  or dict of tensors for models with multiple outputs, the loss and the
+  metrics then receive that structure.
 - `compute_loss`: how the loss is computed from the predictions.
 - `compute_metrics`: how the metrics are computed from the predictions.
 - `training_step` / `validation_step`: what happens for one batch.
@@ -28,7 +30,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset, RandomSampler, Subset
 from tqdm import tqdm
 
 from training.callbacks import Callback
@@ -40,6 +42,7 @@ from training.results import (
     StepOutput, 
     TrainingResult
 )
+from training.tensors import ModelOutput, concatenate, detach, to_cpu
 from training.visualisation import Visualiser, build_visualisers
 
 
@@ -127,6 +130,8 @@ class Trainer:
         # State that callbacks can read (and `should_stop` can write).
         self.result = TrainingResult()
         self.current_fold = FoldResult()
+        self.train_dataloader: DataLoader | None = None
+        self.val_dataloader: DataLoader | None = None
         self.is_best_epoch = False
         self.should_stop = False
 
@@ -225,6 +230,14 @@ class Trainer:
         if visualisers and output_dir is None:
             raise ValueError("`output_dir` is required to use visualisers.")
 
+        shuffled = isinstance(dataloader.sampler, RandomSampler)
+        if shuffled:
+            self.logger.warning(
+                "The dataloader shuffles, so the order of the predictions "
+                "does not match the dataset. `EvaluationResult.dataset` "
+                "will not be set."
+            )
+
         self.model.eval()
         losses: list[float] = []
         components: dict[str, list[float]] = defaultdict(list)
@@ -240,12 +253,12 @@ class Trainer:
                 losses.append(loss.item())
                 for name, value in loss_components.items():
                     components[name].append(value)
-                predictions.append(y_hat.cpu())
+                predictions.append(to_cpu(y_hat))
                 targets.append(y.cpu())
                 if sample_inputs is None:
                     sample_inputs = batch[0].cpu()
 
-        predictions = torch.cat(predictions)
+        predictions = concatenate(predictions)
         targets = torch.cat(targets)
         result = EvaluationResult(
             loss=float(np.mean(losses)),
@@ -253,7 +266,8 @@ class Trainer:
             metrics=self.compute_metrics(predictions, targets),
             predictions=predictions,
             targets=targets,
-            sample_inputs=sample_inputs
+            sample_inputs=sample_inputs,
+            dataset=None if shuffled else dataloader.dataset
         )
         self._log_result("test", result.loss, result.metrics)
 
@@ -284,7 +298,10 @@ class Trainer:
         paths = []
         for name, visualiser in built.items():
             self.logger.info(f"Running visualiser '{name}'")
-            paths.extend(visualiser(result, Path(output_dir)))
+            saved = visualiser(result, Path(output_dir))
+            if not saved:
+                self.logger.warning(f"Visualiser '{name}' created no files.")
+            paths.extend(saved)
         return paths
 
     # ------------------------------------------------------------------
@@ -340,14 +357,15 @@ class Trainer:
     def forward(
         self, 
         batch: tuple[torch.Tensor, torch.Tensor]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[ModelOutput, torch.Tensor]:
         """
         Move a batch to the device and run it through the model.
 
         :param batch: Inputs and targets.
         :type batch: tuple[torch.Tensor, torch.Tensor]
-        :return: Predictions and targets (on the device).
-        :rtype: tuple[torch.Tensor, torch.Tensor]
+        :return: Model output (a tensor, or a tuple or dict of tensors if
+            the model has multiple outputs) and targets, on the device.
+        :rtype: tuple[ModelOutput, torch.Tensor]
         """
         X, y = batch
         X = X.to(self.device, non_blocking=True)
@@ -356,14 +374,14 @@ class Trainer:
 
     def compute_loss(
         self, 
-        y_hat: torch.Tensor, 
+        y_hat: ModelOutput, 
         y: torch.Tensor
     ) -> tuple[torch.Tensor, dict[str, float]]:
         """
         Compute the loss with the loss function.
 
-        :param y_hat: Model predictions.
-        :type y_hat: torch.Tensor
+        :param y_hat: Model output.
+        :type y_hat: ModelOutput
         :param y: Targets.
         :type y: torch.Tensor
         :return: Total loss and the named loss components (empty if the
@@ -378,14 +396,14 @@ class Trainer:
 
     def compute_metrics(
         self, 
-        y_hat: torch.Tensor, 
+        y_hat: ModelOutput, 
         y: torch.Tensor
     ) -> dict[str, float]:
         """
         Compute all configured metrics.
 
-        :param y_hat: Model predictions.
-        :type y_hat: torch.Tensor
+        :param y_hat: Model output.
+        :type y_hat: ModelOutput
         :param y: Targets.
         :type y: torch.Tensor
         :return: Dict mapping metric names to values.
@@ -413,7 +431,7 @@ class Trainer:
             loss, components = self.compute_loss(y_hat, y)
         loss.backward()
         self.optimiser.step()
-        return StepOutput(loss, components, y_hat.detach(), y)
+        return StepOutput(loss, components, detach(y_hat), y)
 
     def validation_step(
         self, 
@@ -530,6 +548,8 @@ class Trainer:
         self._reset_training_state()
         self.current_fold = FoldResult()
         self.result.folds.append(self.current_fold)
+        self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
         self.should_stop = False
         self.is_best_epoch = False
         fold_best_state = None

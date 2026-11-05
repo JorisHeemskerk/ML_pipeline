@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import torch
+from torch.utils.data import Dataset
+
+from training.tensors import ModelOutput
 
 
 def _pad_to_longest(arrays: list[list[float]]) -> np.ndarray:
@@ -40,14 +43,15 @@ class StepOutput:
     :param loss_components: Named parts of the loss, empty if the loss
         function does not report any.
     :type loss_components: dict[str, float]
-    :param y_hat: Predictions, detached.
-    :type y_hat: torch.Tensor
+    :param y_hat: Model output, detached. A tensor, or a tuple or dict of
+        tensors if the model has multiple outputs.
+    :type y_hat: ModelOutput
     :param y: Targets.
     :type y: torch.Tensor
     """
     loss: torch.Tensor
     loss_components: dict[str, float]
-    y_hat: torch.Tensor
+    y_hat: ModelOutput
     y: torch.Tensor
 
 
@@ -214,17 +218,25 @@ class EvaluationResult:
     :param metrics: Each metric, computed over the entire dataset at 
         once.
     :type metrics: dict[str, float]
-    :param predictions: All predictions, concatenated, on the CPU.
-    :type predictions: torch.Tensor
+    :param predictions: All model outputs, concatenated, on the CPU. A
+        tensor, or a tuple or dict of tensors if the model has multiple
+        outputs.
+    :type predictions: ModelOutput
     :param targets: All targets, concatenated, on the CPU.
     :type targets: torch.Tensor
     :param sample_inputs: Inputs of the first batch, on the CPU. Handy
         for visualisers that draw the model input.
     :type sample_inputs: torch.Tensor | None
+    :param dataset: Dataset that was evaluated, so visualisers can look
+        up the inputs of any datapoint: item `i` of `predictions` belongs
+        to `dataset[i]`. None if the dataloader shuffled the data, as
+        that order is not kept. (DEFAULT=None)
+    :type dataset: Dataset | None
     """
     loss: float
     loss_components: dict[str, float]
     metrics: dict[str, float]
-    predictions: torch.Tensor
+    predictions: ModelOutput
     targets: torch.Tensor
     sample_inputs: torch.Tensor | None = None
+    dataset: Dataset | None = None

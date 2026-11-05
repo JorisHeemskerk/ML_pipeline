@@ -1,0 +1,105 @@
+# Finds interpretable features in the embeddings of a frozen ResNet, by 
+# training a sparse autoencoder on CIFAR-10 embeddings. The features are 
+# visualised on the test set once the training is done.
+# Run with: python main.py -c config/cifar10_sae.yaml
+#
+# The modules are chained: images -> ResNet -> embeddings -> 
+# SparseAutoencoder. Only the autoencoder is trained, as the ResNet is
+# frozen. Its `embedding_dim` (512 for resnet18/34, 2048 for the others)
+# must equal the `input_dim` of the autoencoder, this is checked when the
+# chain is linked.
+#
+# NOTE: write floats with an exponent with a dot (5.0e-6), otherwise YAML
+# reads them as a string.
+#
+# Trainer keys that are new compared to config/mnist_nn.yaml, see the 
+# README for all of them:
+#   loss            `module: <label>` uses a loss module of this job.
+#   metrics         l0 (active features per datapoint) and 
+#                   explained_variance (reconstruction quality).
+#   callbacks       Callbacks selected by name, [name, {kwargs}]. Here,
+#                   dead features are reinitialised every 10 epochs.
+#   test: visualisers
+#                   The feature visualisers of 
+#                   training/feature_visualisation.py. `top_n` is the 
+#                   number of most relevant features to draw.
+#
+# Tuning: `l1_coeff` balances reconstruction and sparsity. If (almost)
+# all features die, lower it, if too many features are active per 
+# datapoint (see the l0 metric), raise it.
+
+general:
+    # No device is set, so the fastest available one is used. The ResNet
+    # runs on every image every epoch, so a GPU is strongly advised.
+    output_folder: output/{datetime}/
+    seed: 42
+jobs:
+    - job:
+        name: cifar10_sae
+        modules:
+            - CIFAR10Data:
+                label: train_data
+                root: data/
+                train: True
+            - CIFAR10Data:
+                label: test_data
+                root: data/
+                train: False
+            - ResNet:
+                label: backbone
+                architecture: resnet18   # resnet18/34/50/101/152
+                pretrained: True
+                frozen: True
+                # CIFAR images are 32x32, the pretrained weights prefer
+                # larger images (224 is best, but slow).
+                input_size: 64
+            - SparseAutoencoder:
+                label: sae
+                input_dim: 512           # embedding_dim of the ResNet
+                hidden_dim: 2048         # number of features
+            - SparseAutoencoderLoss:
+                label: sae_loss
+                l1_coeff: 1.0e-3
+            - Chain:
+                label: model
+                stages: [backbone, sae]
+        trainer:
+            mode: holdout
+            loader_defaults:
+                batch_size: 256
+                num_workers: 4
+                pin_memory: false
+            train:
+                data: train_data
+                loader:
+                    shuffle: True
+            val:
+                data: train_data
+                fraction: 0.1
+                seed: 42
+            test:
+                data: test_data
+                visualisers:
+                    - feature_statistics
+                    - feature_trigger_histogram
+                    - [feature_gallery, {top_n: 16}]
+                    - [feature_summary, {top_n: 16}]
+                    - [feature_contrast, {top_n: 16}]
+            model: model
+            epochs: 50
+            loss:
+                module: sae_loss
+            optimiser:
+                name: Adam
+                params:
+                    lr: 1.0e-3
+            metrics: [l0, explained_variance]
+            monitor:
+                value: loss
+                goal: min
+            callbacks:
+                - [dead_feature_resampling, {every_n_epochs: 10, until_epoch: 40}]
+            checkpoint:
+                every: 10
+            export:
+                predictions: False

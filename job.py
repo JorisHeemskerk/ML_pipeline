@@ -48,6 +48,14 @@ class Job:
         else:
             self.modules[module.label] = module
 
+    def link_modules(self)-> None:
+        """
+        Let every module refer to the other modules of this job. Must be
+        called after all modules are added.
+        """
+        for module in self.modules.values():
+            module.link(self.modules)
+
     def set_trainer(self, trainer_config: dict):
         from trainer import Trainer
         self.trainer = Trainer(self, trainer_config)
